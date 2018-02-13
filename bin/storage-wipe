@@ -84,7 +84,6 @@ function addWriter(storage) {
   var writer = new wipe.Writer({
     path: storage.raw,
     flags: fs.constants.O_RDWR |
-      fs.constants.O_EXCL |
       fs.constants.O_NONBLOCK |
       fs.constants.O_SYNC |
       fs.constants.O_DIRECT,
