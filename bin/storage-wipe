@@ -139,4 +139,4 @@ setInterval(() => {
 }, 500)
 
 updateState()
-detectDevices(scan)
+detectDevices(() => {})
