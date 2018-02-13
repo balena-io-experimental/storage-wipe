@@ -6,6 +6,9 @@
   "author": "Jonas Hermsmeier <jhermsmeier@gmail.com> (https://jhermsmeier.de)",
   "keywords": [],
   "main": "lib/wipe.js",
+  "bin": {
+    "storage-wipe": "bin/storage-wipe"
+  },
   "scripts": {},
   "dependencies": {
     "ansi-escapes": "^3.0.0",
