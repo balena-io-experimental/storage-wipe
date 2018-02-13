@@ -1,0 +1,143 @@
+#!/usr/bin/env node
+var cpus = require('os').cpus().length
+
+// Give libuv 4 threads per core to work with
+process.env.UV_THREADPOOL_SIZE = cpus * 4
+
+var fs = require('fs')
+var path = require('path')
+var argv = require('yargs')
+  .wrap(null)
+  .usage('Usage: $0 [options]')
+  .example('$0 --exclude-file blacklist.txt')
+  .example('$0 -e /dev/sda')
+  .alias('help', 'h')
+  .alias('version', 'v')
+  .option('exclude', {
+    alias: 'e',
+    type: 'string',
+    description: 'Storage device to exclude (i.e. /dev/sda)',
+  })
+  .option('exclude-file', {
+    type: 'string',
+    description: 'Device blacklist file',
+  })
+  .argv
+
+var blacklist = []
+
+if (argv.excludeFile) {
+  var excludes = fs.readFileSync(argv.excludeFile, 'utf8')
+    .replace(/^[\s\r\n]+|[\s\r\n]+$/g, '')
+    .split(/\r?\n/g)
+    .map((v) => { return v.trim() })
+  blacklist = blacklist.concat(excludes)
+}
+
+if (argv.exclude) {
+  blacklist = blacklist.concat(argv.exclude)
+}
+
+// console.log(argv)
+console.log('Excluding:')
+blacklist.forEach((device) => {
+  console.log('-', device)
+})
+console.log('')
+
+var ansi = require('ansi-escapes')
+var bytes = require('pretty-bytes')
+var async = require('async')
+var drivelist = require('drivelist')
+var mountutils = require('mountutils')
+var debug = require('debug')('wipe')
+var wipe = require('..')
+
+var writers = new Map()
+var state = {
+  devices: 0,
+  speed: 0,
+  speedPerDevice: 0,
+}
+
+function updateState() {
+  state.speed = 0
+  state.devices = writers.size
+  writers.forEach((writer, device) => {
+    state.speed += writer.target.speed
+  })
+  state.speedPerDevice = (state.speed / state.devices) || 0
+  process.stdout.write(
+    ansi.eraseStartLine + ansi.cursorLeft +
+    `${bytes(state.speed)}/s (${bytes(state.speedPerDevice)}/s per device with ${state.devices} device(s))`
+  )
+}
+
+function addWriter(storage) {
+
+  debug('adding', storage.description, storage.device)
+
+  if(writers.has(storage.device)) {
+    throw new Error(`Already flashing device "${storage.device}"`)
+  }
+
+  var writer = new wipe.Writer({
+    path: storage.raw,
+    flags: fs.constants.O_RDWR |
+      fs.constants.O_EXCL |
+      fs.constants.O_NONBLOCK |
+      fs.constants.O_SYNC |
+      fs.constants.O_DIRECT,
+    image: {
+      stream: wipe.createZeroFill({
+        start: 0,
+        end: storage.size,
+      }),
+    },
+  })
+
+  writer.once('error', (error) => {
+    debug('writer:error', error.message)
+    writers.delete(storage.device)
+  })
+
+  writer.once('finish', () => {
+    writers.delete(storage.device)
+  })
+
+  writer.write()
+  writers.set(storage.device, writer)
+
+}
+
+function detectDevices(callback) {
+  drivelist.list((error, results) => {
+    if (error) return callback(error)
+    results = results.filter((storage) => {
+      var isBlacklisted = blacklist.includes(storage.device) ||
+        blacklist.includes(storage.raw)
+      return !isBlacklisted
+    }).filter((storage) => {
+      return !writers.has(storage.device)
+    })
+    async.each(results, (storage, next) => {
+      mountutils.unmountDisk(storage.device, (error) => {
+        if (error) return next()
+        addWriter(storage)
+        next()
+      })
+    }, callback)
+  })
+}
+
+function scan(error) {
+  if (error) debug('scan', error.message)
+  setTimeout(() => detectDevices(scan), 1000)
+}
+
+setInterval(() => {
+  updateState()
+}, 500)
+
+updateState()
+detectDevices(scan)

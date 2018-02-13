@@ -1,0 +1,4 @@
+/dev/disk0
+/dev/rdisk0
+/dev/disk1
+/dev/rdisk1
